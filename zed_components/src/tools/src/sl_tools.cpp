@@ -1,4 +1,4 @@
-// Copyright 2022 Stereolabs
+// Copyright 2024 Stereolabs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 #include <sys/stat.h>
 #include <unistd.h> // getuid
 
+#include <algorithm>
+#include <string>
 #include <sstream>
 #include <vector>
 
@@ -136,7 +138,7 @@ rclcpp::Time slTime2Ros(sl::Timestamp t, rcl_clock_type_t clock_type)
 }
 
 std::unique_ptr<sensor_msgs::msg::Image> imageToROSmsg(
-  sl::Mat & img, std::string frameId, rclcpp::Time t)
+  const sl::Mat & img, const std::string & frameId, const rclcpp::Time & t)
 {
   std::unique_ptr<sensor_msgs::msg::Image> imgMessage = std::make_unique<sensor_msgs::msg::Image>();
 
@@ -210,7 +212,8 @@ std::unique_ptr<sensor_msgs::msg::Image> imageToROSmsg(
 }
 
 std::unique_ptr<sensor_msgs::msg::Image> imagesToROSmsg(
-  sl::Mat & left, sl::Mat & right, std::string frameId, rclcpp::Time t)
+  const sl::Mat & left, const sl::Mat & right, const std::string & frameId,
+  const rclcpp::Time & t)
 {
   std::unique_ptr<sensor_msgs::msg::Image> imgMsgPtr = std::make_unique<sensor_msgs::msg::Image>();
 
@@ -236,63 +239,54 @@ std::unique_ptr<sensor_msgs::msg::Image> imagesToROSmsg(
 
   sl::MAT_TYPE dataType = left.getDataType();
 
-  int dataSize = 0;
   char * srcL;
   char * srcR;
 
   switch (dataType) {
     case sl::MAT_TYPE::F32_C1: /**< float 1 channel.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::TYPE_32FC1;
-      dataSize = sizeof(float);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::float1>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::float1>());
       break;
 
     case sl::MAT_TYPE::F32_C2: /**< float 2 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::TYPE_32FC2;
-      dataSize = 2 * sizeof(float);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::float2>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::float2>());
       break;
 
     case sl::MAT_TYPE::F32_C3: /**< float 3 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::TYPE_32FC3;
-      dataSize = 3 * sizeof(float);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::float3>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::float3>());
       break;
 
     case sl::MAT_TYPE::F32_C4: /**< float 4 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::TYPE_32FC4;
-      dataSize = 4 * sizeof(float);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::float4>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::float4>());
       break;
 
     case sl::MAT_TYPE::U8_C1: /**< unsigned char 1 channel.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::MONO8;
-      dataSize = sizeof(char);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::uchar1>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::uchar1>());
       break;
 
     case sl::MAT_TYPE::U8_C2: /**< unsigned char 2 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::TYPE_8UC2;
-      dataSize = 2 * sizeof(char);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::uchar2>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::uchar2>());
       break;
 
     case sl::MAT_TYPE::U8_C3: /**< unsigned char 3 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::BGR8;
-      dataSize = 3 * sizeof(char);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::uchar3>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::uchar3>());
       break;
 
     case sl::MAT_TYPE::U8_C4: /**< unsigned char 4 channels.*/
       imgMsgPtr->encoding = sensor_msgs::image_encodings::BGRA8;
-      dataSize = 4 * sizeof(char);
       srcL = reinterpret_cast<char *>(left.getPtr<sl::uchar4>());
       srcR = reinterpret_cast<char *>(right.getPtr<sl::uchar4>());
       break;
@@ -352,7 +346,7 @@ std::string qos2str(rmw_qos_durability_policy_t qos)
   return "Unknown QoS value";
 }
 
-inline bool contains(std::vector<sl::float2> & poly, sl::float2 test)
+inline bool contains(const std::vector<sl::float2> & poly, sl::float2 test)
 {
   int i, j;
   bool c = false;
@@ -377,15 +371,16 @@ bool generateROI(const std::vector<sl::float2> & poly, sl::Mat & out_roi)
   }
 
   // Set each pixel to valid
-  // std::cerr << "Setting ROI mask to full valid" << std::endl;
+  //std::cerr << "Setting ROI mask to full valid" << std::endl;
   out_roi.setTo<sl::uchar1>(255, sl::MEM::CPU);
 
   // ----> De-normalize coordinates
   size_t w = out_roi.getWidth();
   size_t h = out_roi.getHeight();
 
-  // std::cerr << "De-normalize coordinates" << std::endl;
-  // std::cerr << "Image resolution: " << w << "x" << h << std::endl;
+  //std::cerr << "De-normalize coordinates" << std::endl;
+  //std::cerr << "Image resolution: " << w << "x" << h << std::endl;
+  //std::cerr << "Polygon size: " << poly.size() << std::endl;
   std::vector<sl::float2> poly_img;
   size_t idx = 0;
   for (auto & it : poly) {
@@ -402,6 +397,7 @@ bool generateROI(const std::vector<sl::float2> & poly, sl::Mat & out_roi)
 
     poly_img.push_back(pt);
 
+    //std::cerr << "Pushed pt #: " << idx << std::endl;
     ++idx;
   }
   // <---- De-normalize coordinates
@@ -416,8 +412,8 @@ bool generateROI(const std::vector<sl::float2> & poly, sl::Mat & out_roi)
       }
     }
   }
-  // std::cerr << "Mask ready" << std::endl;
-  // std::cerr << "ROI resolution: " << w << "x" << h << std::endl;
+  //std::cerr << "Mask ready" << std::endl;
+  //std::cerr << "ROI resolution: " << w << "x" << h << std::endl;
   // <---- Unset ROI pixels outside the polygon
 
   return true;
@@ -518,6 +514,51 @@ bool checkRoot()
   }
 }
 
+bool ReadCocoYaml(
+  const std::string & label_file, std::unordered_map<std::string,
+  std::string> & out_labels)
+{
+  // Open the YAML file
+  std::ifstream file(label_file.c_str());
+  if (!file.is_open()) {
+    return false;
+  }
+
+  // Read the file line by line
+  std::string line;
+  std::vector<std::string> lines;
+  while (std::getline(file, line)) {
+    lines.push_back(line);
+  }
+
+  // Find the start and end of the names section
+  std::size_t start = 0;
+  std::size_t end = 0;
+  for (std::size_t i = 0; i < lines.size(); i++) {
+    if (lines[i].find("names:") != std::string::npos) {
+      start = i + 1;
+    } else if (start > 0 && lines[i].find(':') == std::string::npos) {
+      end = i;
+      break;
+    }
+  }
+
+  // Extract the labels
+  for (std::size_t i = start; i < end; i++) {
+    std::stringstream ss(lines[i]);
+    std::string class_id, label;
+    std::getline(ss, class_id, ':'); // Extract the number before the delimiter
+    // ---> remove heading spaces and tabs
+    class_id.erase(remove(class_id.begin(), class_id.end(), ' '), class_id.end());
+    class_id.erase(remove(class_id.begin(), class_id.end(), '\t'), class_id.end());
+    // <--- remove heading spaces and tabs
+    std::getline(ss, label); // Extract the string after the delimiter
+    out_labels[class_id] = label;
+  }
+
+  return true;
+}
+
 
 bool isZED(sl::MODEL camModel)
 {
@@ -552,6 +593,9 @@ bool isZEDX(sl::MODEL camModel)
     return true;
   }
   if (camModel == sl::MODEL::ZED_XM) {
+    return true;
+  }
+  if (camModel == sl::MODEL::VIRTUAL_ZED_X) {
     return true;
   }
   return false;

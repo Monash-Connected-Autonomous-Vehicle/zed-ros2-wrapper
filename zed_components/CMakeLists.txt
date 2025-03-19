@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.8)
 project(zed_components)
 
 ################################################
@@ -40,7 +40,7 @@ if(ROS2_FOUND)
         #message("* ROS2 ${FOUND_ROS2_DISTRO} is officially supported by this package.")
         add_definitions(-DFOUND_HUMBLE)
     else()
-        message("*** WARNING *** ROS2 ${FOUND_ROS2_DISTRO} is not officially supported by this package. Correct working is not guarantee.")
+        message("*** WARNING *** ROS2 ${FOUND_ROS2_DISTRO} is not officially supported by the package '${PROJECT_NAME}'. Correct operation is not guaranteed.")
     endif()
 else()
     message("*** WARNING *** ROS2 distro is unknown. This package could not work correctly.")
@@ -52,9 +52,9 @@ if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
 endif()
 
-# Default to C++14
+# Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 # if CMAKE_BUILD_TYPE is not specified, take 'Release' as default
@@ -78,7 +78,7 @@ endif()
 
 #############################################
 # Dependencies
-find_package(ZED 4 REQUIRED)
+find_package(ZED REQUIRED)
 
 exec_program(uname ARGS -p OUTPUT_VARIABLE CMAKE_SYSTEM_NAME2)
 if(CMAKE_SYSTEM_NAME2 MATCHES "aarch64") # Jetson TX
@@ -96,27 +96,26 @@ set(DEPENDENCIES
     tf2
     tf2_ros
     tf2_geometry_msgs
-    geometry_msgs
+    geometry_msgs    
     nav_msgs
     nmea_msgs
     geographic_msgs
     sensor_msgs
     stereo_msgs
-    zed_interfaces
+    zed_msgs
     std_srvs
     diagnostic_msgs
     diagnostic_updater
     visualization_msgs
     shape_msgs
     robot_localization
-    ${TM_DEP}
 )
 
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 find_package(rcutils REQUIRED)
-find_package(zed_interfaces)
+find_package(zed_msgs)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(builtin_interfaces REQUIRED)
@@ -139,6 +138,11 @@ find_package(visualization_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(robot_localization REQUIRED)
 
+if(NOT ${FOUND_ROS2_DISTRO} STREQUAL "foxy")
+  find_package(point_cloud_transport REQUIRED)
+  list(APPEND DEPENDENCIES point_cloud_transport)
+endif()
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
@@ -151,14 +155,8 @@ file(GLOB_RECURSE all_files ${CMAKE_SOURCE_DIR}/*)
 add_custom_target(all_${PROJECT_NAME}_files SOURCES ${all_files})
 
 ###############################################################################
-# INCLUDES and LIBS
-include_directories(
-    ${CUDA_INCLUDE_DIRS}
-    ${ZED_INCLUDE_DIRS}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include
-)
+# LIBS
+
 
 # create ament index resource which references the libraries in the binary dir
 set(node_plugins "")
@@ -177,11 +175,14 @@ set(SL_TOOLS_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_tools.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_win_avg.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_logging.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/json.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/gnss_replay.hpp
 )
 
 set(SL_TOOLS_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/sl_tools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/sl_win_avg.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/gnss_replay.cpp
 )
 
 set(ZED_CAMERA_INC
@@ -194,14 +195,31 @@ set(ZED_CAMERA_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/src/zed_camera_component.cpp
 )
 
+set(ZED_CAMERA_ONE_INC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include/visibility_control.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/include/sl_types.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/include/zed_camera_one_component.hpp
+)
+
+set(ZED_CAMERA_ONE_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/src/zed_camera_one_component.cpp
+)
 ###############################################################################
 # Bin and Install
 
+# ZED Camera Component
 add_library(zed_camera_component SHARED
     ${SL_TOOLS_INC}
     ${SL_TOOLS_SRC}
     ${ZED_CAMERA_INC}
     ${ZED_CAMERA_SRC}
+)
+target_include_directories(zed_camera_component PUBLIC
+    ${CUDA_INCLUDE_DIRS}
+    ${ZED_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include
 )
 target_compile_definitions(zed_camera_component
     PRIVATE "COMPOSITION_BUILDING_DLL"
@@ -216,8 +234,35 @@ ament_target_dependencies(zed_camera_component
 rclcpp_components_register_nodes(zed_camera_component "stereolabs::ZedCamera")
 set(node_plugins "${node_plugins}stereolabs::ZedCamera;$<TARGET_FILE:zed_camera_component>\n")
 
+# ZED Camera One Component
+add_library(zed_camera_one_component SHARED
+    ${SL_TOOLS_INC}
+    ${SL_TOOLS_SRC}
+    ${ZED_CAMERA_ONE_INC}
+    ${ZED_CAMERA_ONE_SRC}
+)
+target_include_directories(zed_camera_one_component PUBLIC
+    ${CUDA_INCLUDE_DIRS}
+    ${ZED_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/zed_camera/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include
+)
+target_compile_definitions(zed_camera_one_component
+    PRIVATE "COMPOSITION_BUILDING_DLL"
+)
+target_link_libraries(zed_camera_one_component
+    ${ZED_LIBS}
+)
+ament_target_dependencies(zed_camera_one_component
+    ${DEPENDENCIES}
+)
+
+rclcpp_components_register_nodes(zed_camera_one_component "stereolabs::ZedCameraOne")
+set(node_plugins "${node_plugins}stereolabs::ZedCameraOne;$<TARGET_FILE:zed_camera_one_component>\n")
+
 # Install components
-install(TARGETS zed_camera_component
+install(TARGETS zed_camera_component zed_camera_one_component
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -232,6 +277,9 @@ install(DIRECTORY
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(zed_camera_component)
+ament_export_libraries(
+    zed_camera_component
+    zed_camera_one_component
+)
 ament_export_dependencies(${DEPENDENCIES})
 ament_package()
